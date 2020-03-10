@@ -117,7 +117,7 @@ void gMsgHandler(Bot &bot,
 
 int main(int argc, char *argv[]) {
     cout << "Author: Nicholas Wang <me@nicho1as.wang>" << endl
-         << "Copyright (C) 2018  Licensed with GPLv3, for details, see: https://www.gnu.org/licenses/gpl-3.0.en.html"
+         << "Copyright (C) 2020  Licensed with GPLv3, for details, see: https://www.gnu.org/licenses/gpl-3.0.en.html"
          << endl << endl;
     if(argc > 1) {
         bot_token = argv[1];
