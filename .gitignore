@@ -1,3 +1,4 @@
-config.h
+config_*.h
 cmake-build-debug/*
 .idea/*
+
