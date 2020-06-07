@@ -178,6 +178,36 @@ void gMsgHandler(Bot &bot,
 }
 
 int main(int argc, char *argv[]) {
+    int watchdog_fd[2];
+    pipe(watchdog_fd);
+    pid_t child_id = fork();
+
+    if(child_id < 0) {
+        perror("fork");
+        cerr << "Failed to create watchdog process, exiting...\n";
+        exit(1);
+    } else if(child_id) {
+        // watchdog process
+        close(watchdog_fd[1]);
+        cout << "Watchdog PID:\t" << getpid() << "\nMaster PID:\t" << child_id << endl;
+        time_t last_feed = time(nullptr);
+        fcntl(watchdog_fd[0], F_SETFL, fcntl(watchdog_fd[0], F_GETFL) | O_NONBLOCK);
+        while(time(nullptr) - last_feed < 40) {
+            if(read(watchdog_fd[0], &last_feed, sizeof(time_t)) == sizeof(time_t))
+                cout << "\033[1m[" << put_time(localtime(&last_feed), "%h %d %H:%M:%S") << "]\033[0m\t"
+                     << "Yummy feed~\n";
+            sleep(1);
+        }
+        close(watchdog_fd[0]);
+        kill(child_id, SIGHUP);
+        waitpid(child_id, NULL, WIFSIGNALED(0) | WIFEXITED(0));
+        last_feed = time(nullptr);
+        cout << "\033[1m[" << put_time(localtime(&last_feed), "%h %d %H:%M:%S") << "]\033[0m\t" << "Yummy bot~\n";
+        exit(0);
+    }
+    close(watchdog_fd[0]);
+    prctl(PR_SET_PDEATHSIG, SIGHUP);
+    cout << "Master process started.\n";
     cout << "Author: Nicholas Wang <me@nicho1as.wang>" << endl
          << "Copyright (C) 2020  Licensed with GPLv3, for details, see: https://www.gnu.org/licenses/gpl-3.0.en.html"
          << endl << endl;
@@ -202,7 +232,7 @@ int main(int argc, char *argv[]) {
     unordered_map<int32_t, time_t> jail;
     jail_ptr = &jail;
     Bot bot(bot_token);
-    bot.getEvents().onUnknownCommand([&bot](const Message::Ptr &message) {
+    bot.getEvents().onCommand("start", [&bot](const Message::Ptr &message) {
         if(message->date < birthTime)return;
         if(is_in_jail(message->from->id)) {
             bot.getApi().sendMessage(message->chat->id, "你当前处于被临时封禁状态。");
@@ -243,7 +273,7 @@ int main(int argc, char *argv[]) {
 
     bot.getEvents().onCommand("cancel", [&bot, &unfinished_polls](const Message::Ptr &message) {
         if(message->date < birthTime)return;
-        if(is_in_jail(message->from->id)){
+        if(is_in_jail(message->from->id)) {
             bot.getApi().sendMessage(message->chat->id, "你当前处于被临时封禁状态。");
             return;
         }
@@ -258,7 +288,7 @@ int main(int argc, char *argv[]) {
 
     bot.getEvents().onCommand("admin", [&bot](const Message::Ptr &message) {
         if(message->date < birthTime)return;
-        if(is_in_jail(message->from->id)){
+        if(is_in_jail(message->from->id)) {
             bot.getApi().sendMessage(message->chat->id, "你当前处于被临时封禁状态。");
             return;
         }
@@ -274,7 +304,7 @@ int main(int argc, char *argv[]) {
 
     bot.getEvents().onNonCommandMessage([&bot, &unfinished_polls, &unpublished_polls](const Message::Ptr &message) {
         if(message->date < birthTime && message->chat->type != TgBot::Chat::Type::Private)return;
-        if(is_in_jail(message->from->id)){
+        if(is_in_jail(message->from->id)) {
             bot.getApi().sendMessage(message->chat->id, "你当前处于被临时封禁状态。");
             return;
         }
@@ -368,27 +398,26 @@ int main(int argc, char *argv[]) {
         }
     });
 
-    try {
-        cout << "Bot: " + string(bot.getApi().getMe()->username.c_str()) << endl
-             << "Build: " << __DATE__ << " " << __TIME__ << endl
-             << "----------" << endl
-             << "\033[1m[" << put_time(localtime(&birthTime), "%h %d %H:%M:%S") << "]\033[0m\t" << "Birth." << endl;
-        TgLongPoll longPoll(bot);
-        while(!sigintGot) {
-            auto tm = time(nullptr);
-            cout << "\033[1m[" << put_time(localtime(&tm), "%h %d %H:%M:%S") << "]\033[0m\t"
-                 << "longPoll started.\n";
-            longPoll.start();
-            /*try { longPoll.start(); }
-            catch(exception &e) {
-                cout << "\033[1;31mErr\033[0m " << e.what() << endl;
-            }*/
-            tm = time(nullptr);
-            cout << "\033[1m[" << put_time(localtime(&tm), "%h %d %H:%M:%S") << "]\033[0m\t" << "longPoll ended.\n";
-            cin.ignore(0);
+
+    cout << "Bot: " + string(bot.getApi().getMe()->username.c_str()) << endl
+         << "Build: " << __DATE__ << " " << __TIME__ << endl
+         << "----------" << endl
+         << "\033[1m[" << put_time(localtime(&birthTime), "%h %d %H:%M:%S") << "]\033[0m\t" << "Birth." << endl;
+    TgLongPoll longPoll(bot);
+    while(!sigintGot) {
+        time_t tm = time(nullptr);
+        cout << "\033[1m[" << put_time(localtime(&tm), "%h %d %H:%M:%S") << "]\033[0m\t"
+             << "longPoll started.\n";
+        try { longPoll.start(); }
+        catch(exception &e) {
+            cout << "\033[1;31mErr\033[0m " << e.what() << endl;
         }
-    } catch(exception &e) {
-        cout << "\033[1;31mErr\033[0m " << e.what();
+        tm = time(nullptr);
+        cout << "\033[1m[" << put_time(localtime(&tm), "%h %d %H:%M:%S") << "]\033[0m\t" << "longPoll ended.\n";
+        cin.ignore(0);
+        write(watchdog_fd[1], &tm, sizeof(tm));
     }
+
+    close(watchdog_fd[1]);
     return 0;
 }
