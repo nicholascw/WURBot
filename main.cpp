@@ -111,11 +111,12 @@ void gMsgHandler(Bot &bot,
             new_poll.username = message->forwardFrom->firstName + " " + message->forwardFrom->lastName;
         else if(message->forwardFromChat) {
             new_poll.username = message->forwardFromChat->title;
-            if(message->forwardFromChat->firstName.length() > 0)
+            if(message->forwardFromChat->firstName.length() > 0) {
                 new_poll.username = new_poll.username + " (" + message->forwardFromChat->firstName;
-            if(message->forwardFromChat->lastName.length() > 0)
-                new_poll.username = new_poll.username + " " + message->forwardFromChat->lastName;
-            new_poll.username = new_poll.username + ")";
+                if(message->forwardFromChat->lastName.length() > 0)
+                    new_poll.username = new_poll.username + " " + message->forwardFromChat->lastName;
+                new_poll.username = new_poll.username + ")";
+            }
         } else
             new_poll.username = message->from->firstName + " " + message->from->lastName;
         new_poll.user_id = message->from->id;
