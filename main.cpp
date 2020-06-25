@@ -313,8 +313,13 @@ int main(int argc, char *argv[]) {
     });
 
     bot.getEvents().onCallbackQuery([&bot, &unpublished_polls](const CallbackQuery::Ptr &query) {
-        if((!is_admin(bot, query->from->id)) || query->message->chat->id != admin_channel_id) {
+        if(query->message->chat->id != admin_channel_id) {
             bot.getApi().answerCallbackQuery(query->id, "艹谁把预印本泄漏了吗这是？强烈谴责！", true);
+            return;
+        }
+        if(is_admin(bot, query->from->id) == false) {
+            bot.getApi().answerCallbackQuery(query->id, "好像暂时被停职了？", true);
+            return;
         }
         auto this_poll = unpublished_polls.find(stoi(query->data.substr(7)));
         if(this_poll == unpublished_polls.end()) {
