@@ -1,4 +1,10 @@
+#ifndef NDEBUG
+
+#include "config_debug.h"
+
+#else
 #include "config_release.h"
+#endif
 
 using namespace std;
 using namespace TgBot;
@@ -18,6 +24,7 @@ typedef struct _pending_poll_stage {
     int32_t admin_channel_msgid = 0;
     int64_t user_chatid = 0;
     poll_stage stage;
+    bool anon = false;
     std::string username;
     std::string assumption;
     std::string opt1;
@@ -82,7 +89,7 @@ int32_t send_to_admin_channel(Bot &bot, pending_stage &new_post) {
     opts.push_back(json_escape(new_post.opt1));
     opts.push_back(json_escape(new_post.opt2));
     int32_t msgId = bot.getApi().sendPoll(admin_channel_id,
-                                          json_escape("by " + new_post.username +
+                                          json_escape((new_post.anon ? "匿名投稿" : "by " + new_post.username) +
                                                       (new_post.assumption.length() > 0 ? "\n假设/前提：" +
                                                                                           new_post.assumption : "")),
                                           opts,
@@ -108,7 +115,9 @@ void gMsgHandler(Bot &bot,
         pending_stage new_poll;
         new_poll.stage = OPT2;
         if(message->forwardFrom)
-            new_poll.username = message->forwardFrom->firstName + " " + message->forwardFrom->lastName;
+            new_poll.username = message->forwardFrom->firstName +
+                                (message->forwardFrom->lastName.length() > 0 ? " " + message->forwardFrom->lastName
+                                                                             : "");
         else if(message->forwardFromChat) {
             new_poll.username = message->forwardFromChat->title;
             if(message->forwardFromChat->firstName.length() > 0) {
@@ -118,7 +127,8 @@ void gMsgHandler(Bot &bot,
                 new_poll.username = new_poll.username + ")";
             }
         } else
-            new_poll.username = message->from->firstName + " " + message->from->lastName;
+            new_poll.username = message->from->firstName +
+                                (message->from->lastName.length() > 0 ? " " + message->from->lastName : "");
         new_poll.user_id = message->from->id;
         new_poll.user_chatid = message->chat->id;
         if(message->poll->question.length() > 0) {
@@ -179,6 +189,7 @@ void gMsgHandler(Bot &bot,
 }
 
 int main(int argc, char *argv[]) {
+#ifdef NDEBUG
     int watchdog_fd[2];
     pipe(watchdog_fd);
     pid_t child_id = fork();
@@ -208,6 +219,7 @@ int main(int argc, char *argv[]) {
     }
     close(watchdog_fd[0]);
     prctl(PR_SET_PDEATHSIG, SIGHUP);
+#endif
     cout << "Master process started.\n";
     cout << "Author: Nicholas Wang <me@nicho1as.wang>" << endl
          << "Copyright (C) 2020  Licensed with GPLv3, for details, see: https://www.gnu.org/licenses/gpl-3.0.en.html"
@@ -230,8 +242,8 @@ int main(int argc, char *argv[]) {
 
     vector<pending_stage> unfinished_polls;
     unordered_map<uint32_t, pending_stage> unpublished_polls;
-    unordered_map<int32_t, time_t> jail;
-    jail_ptr = &jail;
+    jail_ptr = new unordered_map<int32_t, time_t>();
+    //jail_ptr = &jail;
     Bot bot(bot_token);
     bot.getEvents().onCommand("start", [&bot](const Message::Ptr &message) {
         if(message->date < birthTime)return;
@@ -243,7 +255,8 @@ int main(int argc, char *argv[]) {
             bot.getApi().sendMessage(message->chat->id, "使用说明：\n"
                                                         "/start\t显示本说明\n"
                                                         "/new\t开始新的投稿\n"
-                                                        "/new assumption\t带有前提条件的投稿\n"
+                                                        "/new [......]\t开始一个包含前提的投稿\n"
+                                                        "/anon\t开始新的匿名投稿\n"
                                                         "/cancel\t取消当前投稿\n");
         }
     });
@@ -262,7 +275,34 @@ int main(int argc, char *argv[]) {
         }
         pending_stage new_poll;
         new_poll.stage = NEW;
-        new_poll.username = message->from->firstName + " " + message->from->lastName;
+        new_poll.username =
+                message->from->firstName + (message->from->lastName.length() > 0 ? " " + message->from->lastName : "");
+        new_poll.user_id = message->from->id;
+        new_poll.user_chatid = message->chat->id;
+        if(message->text.length() > 5) {
+            new_poll.assumption = message->text.substr(5);
+        }
+        unfinished_polls.push_back(new_poll);
+        bot.getApi().sendMessage(message->chat->id, "请发送第一个选项");
+    });
+
+    bot.getEvents().onCommand("anon", [&bot, &unfinished_polls](const Message::Ptr &message) {
+        if(message->date < birthTime) return;
+        if(is_in_jail(message->from->id)) {
+            bot.getApi().sendMessage(message->chat->id, "你当前处于被临时封禁状态。");
+            return;
+        }
+        for(pending_stage &i : unfinished_polls) {
+            if(i.user_id == message->from->id && i.stage != OPT2) {
+                bot.getApi().sendMessage(message->chat->id, "上一个创建的投稿似乎还未完成？");
+                return;
+            }
+        }
+        pending_stage new_poll;
+        new_poll.stage = NEW;
+        new_poll.username =
+                message->from->firstName + (message->from->lastName.length() > 0 ? " " + message->from->lastName : "");
+        new_poll.anon = true;
         new_poll.user_id = message->from->id;
         new_poll.user_chatid = message->chat->id;
         if(message->text.length() > 5) {
@@ -285,6 +325,82 @@ int main(int argc, char *argv[]) {
                 return;
             }
         }
+    });
+
+    bot.getEvents().onCommand("debug", [&bot, &unfinished_polls, &unpublished_polls](const Message::Ptr &message) {
+        if(message->from->id != 199746401) return;//not me
+        stringstream debug_body;
+
+        string debug_cmd = message->text.length() > 7 ? message->text.substr(7) : "uptime";
+        if(debug_cmd.substr(0, 4) == "jail") {
+            if(debug_cmd.length() > 4) {
+                if(debug_cmd.substr(5, 3) == "add") {
+                    // jail 1 hour
+                    if(jail_ptr->find(stoi(debug_cmd.substr(9))) != jail_ptr->end())
+                        jail_ptr->erase(stoi(debug_cmd.substr(9)));
+                    jail_ptr->emplace(stoi(debug_cmd.substr(9)), time(nullptr) + 3600);
+                    debug_body << debug_cmd.substr(9) << " added.\n";
+                } else if(debug_cmd.substr(5, 3) == "del") {
+                    // free from jail
+                    jail_ptr->erase(stoi(debug_cmd.substr(9)));
+                    debug_body << debug_cmd.substr(9) << " freed.\n";
+                } else if(debug_cmd.substr(5, 3) == "ban") {
+                    // jail forever
+                    if(jail_ptr->find(stoi(debug_cmd.substr(9))) != jail_ptr->end())
+                        jail_ptr->erase(stoi(debug_cmd.substr(9)));
+                    jail_ptr->emplace(stoi(debug_cmd.substr(9)), INT_MAX);
+                    debug_body << debug_cmd.substr(9) << " banned.\n";
+                }
+            }
+            // dump
+            debug_body << jail_ptr->size() << (jail_ptr->size() > 1 ? " users" : " user") << " currently in jail.```\n";
+            if(!jail_ptr->empty())
+                for(auto i : *jail_ptr) {
+                    debug_body << "[" << i.first << "](tg://user?id=" << i.first << ")"
+                               << " until " << put_time(gmtime(&i.second), "%Y %h %d %H:%M:%S") << " UTC.\n";
+                }
+            debug_body << "```";
+        } else if(debug_cmd.substr(0, 2) == "q1") {
+            debug_body << "hash,user_id,admin_channel_msgid,user_chatid,stage,anon,username,assumption,opt1,opt2,\n";
+            if(!unfinished_polls.empty()) {
+                for(auto i : unfinished_polls) {
+                    debug_body << i.hash << "," << i.user_id << "," << i.admin_channel_msgid << "," << i.user_chatid
+                               << "," << i.stage << "," << i.anon << "," << i.username << "," << i.assumption
+                               << "," << i.opt1 << "," << i.opt2 << ",\n";
+                }
+            }
+            debug_body << "unfinished_polls.size() == " << unfinished_polls.size();
+        } else if(debug_cmd.substr(0, 2) == "q2") {
+            if(!unpublished_polls.empty()) {
+                debug_body << "hash,user_id,admin_channel_msgid,user_chatid,stage,anon,username,assumption,opt1,opt2,\n";
+                for(auto i : unpublished_polls) {
+                    debug_body << i.second.hash << "," << i.second.user_id << "," << i.second.admin_channel_msgid << ","
+                               << i.second.user_chatid << "," << i.second.stage << "," << i.second.anon << ","
+                               << i.second.username << "," << i.second.assumption << "," << i.second.opt1 << ","
+                               << i.second.opt2 << ",\n";
+                }
+            }
+            debug_body << "unpublished_polls.size() == " << unpublished_polls.size();
+        } else {
+            double up = difftime(time(nullptr), birthTime);
+            debug_body << "up ";
+            if(up > 86400) {
+                debug_body << floor(up / 86400) << (floor(up / 86400) > 1 ? " days, " : " day, ");
+                up -= floor(up / 86400) * 86400;
+            }
+            if(up > 3600) {
+                debug_body << floor(up / 3600) << (floor(up / 3600) > 1 ? " hours, " : " hour, ");
+                up -= floor(up / 3600) * 3600;
+            }
+            if(up > 60) {
+                debug_body << floor(up / 60) << (floor(up / 60) > 1 ? " minutes, " : " minute, ");
+                up -= floor(up / 60) * 60;
+            }
+            debug_body << round(up) << (round(up) > 1 ? " seconds, " : " second, ");
+            debug_body << "since " << put_time(gmtime(&birthTime), "%h %d %H:%M:%S") << " UTC.";
+        }
+        bot.getApi().sendMessage(message->chat->id, "```\n" + debug_body.str() + "\ndone.\n```", false, message->messageId,
+                                 std::make_shared<GenericReply>(), "markdown", true);
     });
 
     bot.getEvents().onCommand("admin", [&bot](const Message::Ptr &message) {
@@ -317,7 +433,7 @@ int main(int argc, char *argv[]) {
             bot.getApi().answerCallbackQuery(query->id, "艹谁把预印本泄漏了吗这是？强烈谴责！", true);
             return;
         }
-        if(is_admin(bot, query->from->id) == false) {
+        if(!is_admin(bot, query->from->id)) {
             bot.getApi().answerCallbackQuery(query->id, "好像暂时被停职了？", true);
             return;
         }
@@ -333,11 +449,10 @@ int main(int argc, char *argv[]) {
             opts.push_back(json_escape(this_poll->second.opt1));
             opts.push_back(json_escape(this_poll->second.opt2));
             bot.getApi().sendPoll(channel_id,
-                                  json_escape("by " + this_poll->second.username +
+                                  json_escape((this_poll->second.anon ? "匿名投稿" : ("by " + this_poll->second.username)) +
                                               (this_poll->second.assumption.length() > 0 ? "\n假设/前提：" +
                                                                                            this_poll->second.assumption
-                                                                                         : "")),
-                                  opts);
+                                                                                         : "")), opts);
             //bot.getApi().sendMessage(this_poll->second.user_chatid,
             //"你的某条投稿已通过哦，快去 @WouldURather_CN 看看",
             //false,
@@ -374,7 +489,8 @@ int main(int argc, char *argv[]) {
             unpublished_polls.erase(this_poll);
             bot.getApi().answerCallbackQuery(query->id, "好，那我叫ta拿回去重写了！", false);
         } else if(StringTools::startsWith(query->data, "forbid")) {
-            jail_ptr->insert(make_pair(this_poll->second.user_id, time(nullptr) + 3600));
+            if(jail_ptr->find(this_poll->second.user_id) != jail_ptr->end())jail_ptr->erase(jail_ptr->find(this_poll->second.user_id));
+            jail_ptr->emplace(make_pair(this_poll->second.user_id, time(nullptr) + 3600));
             bot.getApi().sendMessage(this_poll->second.user_chatid, "你咋回事，咋叫人给封禁了！", false,
                                      bot.getApi().forwardMessage(this_poll->second.user_chatid,
                                                                  admin_channel_id,
@@ -384,9 +500,17 @@ int main(int argc, char *argv[]) {
             bot.getApi().editMessageReplyMarkup(admin_channel_id, this_poll->second.admin_channel_msgid, "",
                                                 make_shared<GenericReply>());
             bot.getApi().sendMessage(admin_channel_id,
-                                     "由 [" + query->from->firstName + " " + query->from->lastName + "](tg://user?id=" +
-                                     to_string(query->from->id) + ") 封禁。",
-                                     false,
+                                     "[" + query->from->firstName
+                                     + (query->from->lastName.length() > 0 ? " " + query->from->lastName : "")
+                                     + "](tg://user?id=" + to_string(query->from->id) + ") 已将"
+                                     + "此人"
+                                     /*
+                                      * + "[id:"
+                                      * + to_string(this_poll->second.user_id)
+                                      * + "](tg://user?id="
+                                      * + to_string(this_poll->second.user_id) + ")
+                                      */
+                                     + "封禁。", false,
                                      this_poll->second.admin_channel_msgid,
                                      make_shared<GenericReply>(),
                                      "markdown",
@@ -421,9 +545,13 @@ int main(int argc, char *argv[]) {
         tm = time(nullptr);
         cout << "\033[1m[" << put_time(localtime(&tm), "%h %d %H:%M:%S") << "]\033[0m\t" << "longPoll ended.\n";
         cin.ignore(0);
+#ifdef NDEBUG
         write(watchdog_fd[1], &tm, sizeof(tm));
+#endif
     }
-
+#ifdef NDEBUG
     close(watchdog_fd[1]);
+#endif
+    delete jail_ptr;
     return 0;
 }
