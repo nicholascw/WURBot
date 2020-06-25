@@ -1,8 +1,11 @@
 #include "main.h"
+
 #ifndef NDEBUG
-  #include "config_debug.h"
+#include "config_debug.h"
 #else
-  #include "config_release.h"
+
+#include "config_release.h"
+
 #endif
 
 using namespace std;
@@ -17,12 +20,12 @@ typedef enum {
     OPT2,
 } poll_stage;
 
-typedef struct _pending_poll_stage {
+typedef struct {
     uint32_t hash = 0;
-    int32_t user_id;
+    int32_t user_id = 0;
     int32_t admin_channel_msgid = 0;
     int64_t user_chatid = 0;
-    poll_stage stage;
+    poll_stage stage = NEW;
     bool anon = false;
     std::string username;
     std::string assumption;
@@ -73,12 +76,11 @@ int32_t send_to_admin_channel(Bot &bot, pending_stage &new_post) {
     InlineKeyboardButton::Ptr accept(new InlineKeyboardButton);
     InlineKeyboardButton::Ptr reject(new InlineKeyboardButton);
     InlineKeyboardButton::Ptr forbid(new InlineKeyboardButton);
-
-    accept->text = "\u2714 通过";
+    accept->text = "\u2705 通过";
     accept->callbackData = "accept_" + to_string(new_post.hash);
-    reject->text = "\u274c 拒绝";
+    reject->text = "\u274e 拒绝";
     reject->callbackData = "reject_" + to_string(new_post.hash);
-    forbid->text = "\360\237\232\253 封禁";
+    forbid->text = "\U0001F6D1 封禁";
     forbid->callbackData = "forbid_" + to_string(new_post.hash);
     row0.push_back(accept);
     row0.push_back(reject);
