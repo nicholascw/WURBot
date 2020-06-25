@@ -1,11 +1,8 @@
+#include "main.h"
 #ifndef NDEBUG
-
-#include "config_debug.h"
-
+  #include "config_debug.h"
 #else
-
-#include "config_release.h"
-
+  #include "config_release.h"
 #endif
 
 using namespace std;
