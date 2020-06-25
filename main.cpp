@@ -3,7 +3,9 @@
 #include "config_debug.h"
 
 #else
+
 #include "config_release.h"
+
 #endif
 
 using namespace std;
@@ -461,13 +463,10 @@ int main(int argc, char *argv[]) {
             //true);
             bot.getApi().answerCallbackQuery(query->id, "审核通过辣！", false);
             bot.getApi().sendMessage(admin_channel_id,
-                                     "由 [" + query->from->firstName + " " + query->from->lastName + "](tg://user?id=" +
-                                     to_string(query->from->id) + ") 通过。",
-                                     false,
-                                     this_poll->second.admin_channel_msgid,
-                                     make_shared<GenericReply>(),
-                                     "markdown",
-                                     true);
+                                     "由 [" + query->from->firstName + (query->from->lastName.length() > 0 ?
+                                                                       " " + query->from->lastName : "") + "](tg://user?id=" +
+                                     to_string(query->from->id) + ") 通过。", false, this_poll->second.admin_channel_msgid,
+                                     make_shared<GenericReply>(), "markdown", true);
             unpublished_polls.erase(this_poll);
         } else if(StringTools::startsWith(query->data, "reject")) {
             bot.getApi().sendMessage(this_poll->second.user_chatid, "你这条投稿不行啊，审核失败了", false,
@@ -479,13 +478,11 @@ int main(int argc, char *argv[]) {
             bot.getApi().editMessageReplyMarkup(admin_channel_id, this_poll->second.admin_channel_msgid, "",
                                                 make_shared<GenericReply>());
             bot.getApi().sendMessage(admin_channel_id,
-                                     "由 [" + query->from->firstName + " " + query->from->lastName + "](tg://user?id=" +
-                                     to_string(query->from->id) + ") 拒绝。",
-                                     false,
-                                     this_poll->second.admin_channel_msgid,
-                                     make_shared<GenericReply>(),
-                                     "markdown",
-                                     true);
+                                     "由 [" + query->from->firstName + (query->from->lastName.length() > 0 ?
+                                                                       " " + query->from->lastName : "") + "](tg://user?id=" +
+                                     to_string(query->from->id) + ") 拒绝。", false,
+                                     this_poll->second.admin_channel_msgid, make_shared<GenericReply>(),
+                                     "markdown", true);
             unpublished_polls.erase(this_poll);
             bot.getApi().answerCallbackQuery(query->id, "好，那我叫ta拿回去重写了！", false);
         } else if(StringTools::startsWith(query->data, "forbid")) {
