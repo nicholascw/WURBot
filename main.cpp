@@ -1,11 +1,11 @@
 #include "main.h"
 
 #ifndef NDEBUG
+
 #include "config_debug.h"
+
 #else
-
 #include "config_release.h"
-
 #endif
 
 using namespace std;
@@ -90,9 +90,11 @@ int32_t send_to_admin_channel(Bot &bot, pending_stage &new_post) {
     opts.push_back(json_escape(new_post.opt1));
     opts.push_back(json_escape(new_post.opt2));
     int32_t msgId = bot.getApi().sendPoll(admin_channel_id,
-                                          json_escape((new_post.anon ? "匿名投稿" : "by " + new_post.username) +
-                                                      (new_post.assumption.length() > 0 ? "\n假设/前提：" +
-                                                                                          new_post.assumption : "")),
+                                          json_escape((new_post.anon ? "匿名投稿" : "by " +
+                                                                                new_post.username) +
+                                                      (new_post.assumption.length() > 0 ?
+                                                       "\n假设/前提：" +
+                                                       new_post.assumption : "")),
                                           opts,
                                           false,
                                           0,
@@ -117,19 +119,23 @@ void gMsgHandler(Bot &bot,
         new_poll.stage = OPT2;
         if(message->forwardFrom)
             new_poll.username = message->forwardFrom->firstName +
-                                (message->forwardFrom->lastName.length() > 0 ? " " + message->forwardFrom->lastName
+                                (message->forwardFrom->lastName.length() > 0 ? " " +
+                                                                               message->forwardFrom->lastName
                                                                              : "");
         else if(message->forwardFromChat) {
             new_poll.username = message->forwardFromChat->title;
             if(message->forwardFromChat->firstName.length() > 0) {
                 new_poll.username = new_poll.username + " (" + message->forwardFromChat->firstName;
                 if(message->forwardFromChat->lastName.length() > 0)
-                    new_poll.username = new_poll.username + " " + message->forwardFromChat->lastName;
+                    new_poll.username =
+                            new_poll.username + " " + message->forwardFromChat->lastName;
                 new_poll.username = new_poll.username + ")";
             }
         } else
             new_poll.username = message->from->firstName +
-                                (message->from->lastName.length() > 0 ? " " + message->from->lastName : "");
+                                (message->from->lastName.length() > 0 ? " " +
+                                                                        message->from->lastName
+                                                                      : "");
         new_poll.user_id = message->from->id;
         new_poll.user_chatid = message->chat->id;
         if(message->poll->question.length() > 0) {
@@ -262,7 +268,8 @@ int main(int argc, char *argv[]) {
         }
     });
 
-    bot.getEvents().onCommand("new", [&bot, &unfinished_polls](const Message::Ptr &message) {
+    bot.getEvents().onCommand("new", [&bot, &unfinished_polls, &unpublished_polls](
+            const Message::Ptr &message) {
         if(message->date < birthTime) return;
         if(is_in_jail(message->from->id)) {
             bot.getApi().sendMessage(message->chat->id, "你当前处于被临时封禁状态。");
@@ -277,17 +284,36 @@ int main(int argc, char *argv[]) {
         pending_stage new_poll;
         new_poll.stage = NEW;
         new_poll.username =
-                message->from->firstName + (message->from->lastName.length() > 0 ? " " + message->from->lastName : "");
+                message->from->firstName +
+                (message->from->lastName.length() > 0 ? " " + message->from->lastName : "");
         new_poll.user_id = message->from->id;
         new_poll.user_chatid = message->chat->id;
+        int assumption_pos, opt1_pos;
         if(message->text.length() > 5) {
-            new_poll.assumption = message->text.substr(5);
+            if((assumption_pos = message->text.find('\n')) != string::npos) {
+                if((opt1_pos = message->text.find('\n', assumption_pos + 1)) != string::npos) {
+                    new_poll.opt1 = message->text.substr(assumption_pos + 1,
+                                                         opt1_pos - assumption_pos);
+                    new_poll.opt2 = message->text.substr(opt1_pos + 1);
+                }
+                do { new_poll.hash = get_hash(); }
+                while(unpublished_polls.find(new_poll.hash) != unpublished_polls.end());
+                new_poll.admin_channel_msgid = send_to_admin_channel(bot, new_poll);
+                if(new_poll.admin_channel_msgid == 0) {
+                    bot.getApi().sendMessage(message->chat->id, "投稿可能发生错误，请至休息室联系管理员确认。");
+                }
+                unpublished_polls.insert(make_pair(new_poll.hash, new_poll));
+                bot.getApi().sendMessage(message->chat->id, "投稿完成，待审核完成后将自动发送至频道。");
+                return;
+            } else
+                new_poll.assumption = message->text.substr(5);
         }
         unfinished_polls.push_back(new_poll);
         bot.getApi().sendMessage(message->chat->id, "请发送第一个选项");
     });
 
-    bot.getEvents().onCommand("anon", [&bot, &unfinished_polls](const Message::Ptr &message) {
+    bot.getEvents().onCommand("anon", [&bot, &unfinished_polls, &unpublished_polls](
+            const Message::Ptr &message) {
         if(message->date < birthTime) return;
         if(is_in_jail(message->from->id)) {
             bot.getApi().sendMessage(message->chat->id, "你当前处于被临时封禁状态。");
@@ -302,12 +328,30 @@ int main(int argc, char *argv[]) {
         pending_stage new_poll;
         new_poll.stage = NEW;
         new_poll.username =
-                message->from->firstName + (message->from->lastName.length() > 0 ? " " + message->from->lastName : "");
+                message->from->firstName +
+                (message->from->lastName.length() > 0 ? " " + message->from->lastName : "");
         new_poll.anon = true;
         new_poll.user_id = message->from->id;
         new_poll.user_chatid = message->chat->id;
-        if(message->text.length() > 5) {
-            new_poll.assumption = message->text.substr(5);
+        int assumption_pos, opt1_pos;
+        if(message->text.length() > 6) {
+            if((assumption_pos = message->text.find('\n')) != string::npos) {
+                if((opt1_pos = message->text.find('\n', assumption_pos + 1)) != string::npos) {
+                    new_poll.opt1 = message->text.substr(assumption_pos + 1,
+                                                         opt1_pos - assumption_pos);
+                    new_poll.opt2 = message->text.substr(opt1_pos + 1);
+                }
+                do { new_poll.hash = get_hash(); }
+                while(unpublished_polls.find(new_poll.hash) != unpublished_polls.end());
+                new_poll.admin_channel_msgid = send_to_admin_channel(bot, new_poll);
+                if(new_poll.admin_channel_msgid == 0) {
+                    bot.getApi().sendMessage(message->chat->id, "投稿可能发生错误，请至休息室联系管理员确认。");
+                }
+                unpublished_polls.insert(make_pair(new_poll.hash, new_poll));
+                bot.getApi().sendMessage(message->chat->id, "投稿完成，待审核完成后将自动发送至频道。");
+                return;
+            } else
+                new_poll.assumption = message->text.substr(6);
         }
         unfinished_polls.push_back(new_poll);
         bot.getApi().sendMessage(message->chat->id, "请发送第一个选项");
@@ -328,7 +372,8 @@ int main(int argc, char *argv[]) {
         }
     });
 
-    bot.getEvents().onCommand("debug", [&bot, &unfinished_polls, &unpublished_polls](const Message::Ptr &message) {
+    bot.getEvents().onCommand("debug", [&bot, &unfinished_polls, &unpublished_polls](
+            const Message::Ptr &message) {
         if(message->from->id != 199746401) return;//not me
         stringstream debug_body;
 
@@ -354,30 +399,39 @@ int main(int argc, char *argv[]) {
                 }
             }
             // dump
-            debug_body << jail_ptr->size() << (jail_ptr->size() > 1 ? " users" : " user") << " currently in jail.```\n";
+            debug_body << jail_ptr->size() << (jail_ptr->size() > 1 ? " users" : " user")
+                       << " currently in jail.```\n";
             if(!jail_ptr->empty())
                 for(auto i : *jail_ptr) {
                     debug_body << "[" << i.first << "](tg://user?id=" << i.first << ")"
-                               << " until " << put_time(gmtime(&i.second), "%Y %h %d %H:%M:%S") << " UTC.\n";
+                               << " until " << put_time(gmtime(&i.second), "%Y %h %d %H:%M:%S")
+                               << " UTC.\n";
                 }
             debug_body << "```";
         } else if(debug_cmd.substr(0, 2) == "q1") {
-            debug_body << "hash,user_id,admin_channel_msgid,user_chatid,stage,anon,username,assumption,opt1,opt2,\n";
+            debug_body
+                    << "hash,user_id,admin_channel_msgid,user_chatid,stage,anon,username,assumption,opt1,opt2,\n";
             if(!unfinished_polls.empty()) {
                 for(auto i : unfinished_polls) {
-                    debug_body << i.hash << "," << i.user_id << "," << i.admin_channel_msgid << "," << i.user_chatid
-                               << "," << i.stage << "," << i.anon << "," << i.username << "," << i.assumption
+                    debug_body << i.hash << "," << i.user_id << "," << i.admin_channel_msgid << ","
+                               << i.user_chatid
+                               << "," << i.stage << "," << i.anon << "," << i.username << ","
+                               << i.assumption
                                << "," << i.opt1 << "," << i.opt2 << ",\n";
                 }
             }
             debug_body << "unfinished_polls.size() == " << unfinished_polls.size();
         } else if(debug_cmd.substr(0, 2) == "q2") {
             if(!unpublished_polls.empty()) {
-                debug_body << "hash,user_id,admin_channel_msgid,user_chatid,stage,anon,username,assumption,opt1,opt2,\n";
+                debug_body
+                        << "hash,user_id,admin_channel_msgid,user_chatid,stage,anon,username,assumption,opt1,opt2,\n";
                 for(auto i : unpublished_polls) {
-                    debug_body << i.second.hash << "," << i.second.user_id << "," << i.second.admin_channel_msgid << ","
-                               << i.second.user_chatid << "," << i.second.stage << "," << i.second.anon << ","
-                               << i.second.username << "," << i.second.assumption << "," << i.second.opt1 << ","
+                    debug_body << i.second.hash << "," << i.second.user_id << ","
+                               << i.second.admin_channel_msgid << ","
+                               << i.second.user_chatid << "," << i.second.stage << ","
+                               << i.second.anon << ","
+                               << i.second.username << "," << i.second.assumption << ","
+                               << i.second.opt1 << ","
                                << i.second.opt2 << ",\n";
                 }
             }
@@ -400,7 +454,8 @@ int main(int argc, char *argv[]) {
             debug_body << round(up) << (round(up) > 1 ? " seconds, " : " second, ");
             debug_body << "since " << put_time(gmtime(&birthTime), "%h %d %H:%M:%S") << " UTC.";
         }
-        bot.getApi().sendMessage(message->chat->id, "```\n" + debug_body.str() + "\ndone.\n```", false, message->messageId,
+        bot.getApi().sendMessage(message->chat->id, "```\n" + debug_body.str() + "\ndone.\n```",
+                                 false, message->messageId,
                                  std::make_shared<GenericReply>(), "markdown", true);
     });
 
@@ -412,7 +467,8 @@ int main(int argc, char *argv[]) {
         }
         if(is_admin(bot, message->from->id))
             bot.getApi().sendMessage(message->chat->id,
-                                     "由此加入[审核频道](" + bot.getApi().exportChatInviteLink(admin_channel_id) + ")",
+                                     "由此加入[审核频道](" +
+                                     bot.getApi().exportChatInviteLink(admin_channel_id) + ")",
                                      false,
                                      0,
                                      std::make_shared<GenericReply>(),
@@ -420,14 +476,17 @@ int main(int argc, char *argv[]) {
         else bot.getApi().sendMessage(message->chat->id, "你不是频道管理员或没有频道消息发布权限。");
     });
 
-    bot.getEvents().onNonCommandMessage([&bot, &unfinished_polls, &unpublished_polls](const Message::Ptr &message) {
-        if(message->date < birthTime && message->chat->type != TgBot::Chat::Type::Private)return;
-        if(is_in_jail(message->from->id)) {
-            bot.getApi().sendMessage(message->chat->id, "你当前处于被临时封禁状态。");
-            return;
-        }
-        gMsgHandler(bot, message, unfinished_polls, unpublished_polls);
-    });
+    bot.getEvents().onNonCommandMessage(
+            [&bot, &unfinished_polls, &unpublished_polls](const Message::Ptr &message) {
+                if(message->date < birthTime &&
+                   message->chat->type != TgBot::Chat::Type::Private)
+                    return;
+                if(is_in_jail(message->from->id)) {
+                    bot.getApi().sendMessage(message->chat->id, "你当前处于被临时封禁状态。");
+                    return;
+                }
+                gMsgHandler(bot, message, unfinished_polls, unpublished_polls);
+            });
 
     bot.getEvents().onCallbackQuery([&bot, &unpublished_polls](const CallbackQuery::Ptr &query) {
         if(query->message->chat->id != admin_channel_id) {
@@ -444,16 +503,20 @@ int main(int argc, char *argv[]) {
             return;
         }
         if(StringTools::startsWith(query->data, "accept")) {
-            bot.getApi().editMessageReplyMarkup(admin_channel_id, this_poll->second.admin_channel_msgid, "",
+            bot.getApi().editMessageReplyMarkup(admin_channel_id,
+                                                this_poll->second.admin_channel_msgid, "",
                                                 make_shared<GenericReply>());
             vector<std::string> opts;
             opts.push_back(json_escape(this_poll->second.opt1));
             opts.push_back(json_escape(this_poll->second.opt2));
             bot.getApi().sendPoll(channel_id,
-                                  json_escape((this_poll->second.anon ? "匿名投稿" : ("by " + this_poll->second.username)) +
-                                              (this_poll->second.assumption.length() > 0 ? "\n假设/前提：" +
-                                                                                           this_poll->second.assumption
-                                                                                         : "")), opts);
+                                  json_escape((this_poll->second.anon ? "匿名投稿" : ("by " +
+                                                                                  this_poll->second.username)) +
+                                              (this_poll->second.assumption.length() > 0 ?
+                                               "\n假设/前提：" +
+                                               this_poll->second.assumption
+                                                                                         : "")),
+                                  opts);
             //bot.getApi().sendMessage(this_poll->second.user_chatid,
             //"你的某条投稿已通过哦，快去 @WouldURather_CN 看看",
             //false,
@@ -462,9 +525,11 @@ int main(int argc, char *argv[]) {
             //true);
             bot.getApi().answerCallbackQuery(query->id, "审核通过辣！", false);
             bot.getApi().sendMessage(admin_channel_id,
-                                     "由 [" + query->from->firstName + (query->from->lastName.length() > 0 ?
-                                                                       " " + query->from->lastName : "") + "](tg://user?id=" +
-                                     to_string(query->from->id) + ") 通过。", false, this_poll->second.admin_channel_msgid,
+                                     "由 [" + query->from->firstName +
+                                     (query->from->lastName.length() > 0 ?
+                                      " " + query->from->lastName : "") + "](tg://user?id=" +
+                                     to_string(query->from->id) + ") 通过。", false,
+                                     this_poll->second.admin_channel_msgid,
                                      make_shared<GenericReply>(), "markdown", true);
             unpublished_polls.erase(this_poll);
         } else if(StringTools::startsWith(query->data, "reject")) {
@@ -474,18 +539,22 @@ int main(int argc, char *argv[]) {
                                                                  this_poll->second.admin_channel_msgid,
                                                                  true)->messageId,
                                      make_shared<GenericReply>(), "", true);
-            bot.getApi().editMessageReplyMarkup(admin_channel_id, this_poll->second.admin_channel_msgid, "",
+            bot.getApi().editMessageReplyMarkup(admin_channel_id,
+                                                this_poll->second.admin_channel_msgid, "",
                                                 make_shared<GenericReply>());
             bot.getApi().sendMessage(admin_channel_id,
-                                     "由 [" + query->from->firstName + (query->from->lastName.length() > 0 ?
-                                                                       " " + query->from->lastName : "") + "](tg://user?id=" +
+                                     "由 [" + query->from->firstName +
+                                     (query->from->lastName.length() > 0 ?
+                                      " " + query->from->lastName : "") + "](tg://user?id=" +
                                      to_string(query->from->id) + ") 拒绝。", false,
-                                     this_poll->second.admin_channel_msgid, make_shared<GenericReply>(),
+                                     this_poll->second.admin_channel_msgid,
+                                     make_shared<GenericReply>(),
                                      "markdown", true);
             unpublished_polls.erase(this_poll);
             bot.getApi().answerCallbackQuery(query->id, "好，那我叫ta拿回去重写了！", false);
         } else if(StringTools::startsWith(query->data, "forbid")) {
-            if(jail_ptr->find(this_poll->second.user_id) != jail_ptr->end())jail_ptr->erase(jail_ptr->find(this_poll->second.user_id));
+            if(jail_ptr->find(this_poll->second.user_id) != jail_ptr->end())
+                jail_ptr->erase(jail_ptr->find(this_poll->second.user_id));
             jail_ptr->emplace(make_pair(this_poll->second.user_id, time(nullptr) + 3600));
             bot.getApi().sendMessage(this_poll->second.user_chatid, "你咋回事，咋叫人给封禁了！", false,
                                      bot.getApi().forwardMessage(this_poll->second.user_chatid,
@@ -493,11 +562,14 @@ int main(int argc, char *argv[]) {
                                                                  this_poll->second.admin_channel_msgid,
                                                                  true)->messageId,
                                      make_shared<GenericReply>(), "", true);
-            bot.getApi().editMessageReplyMarkup(admin_channel_id, this_poll->second.admin_channel_msgid, "",
+            bot.getApi().editMessageReplyMarkup(admin_channel_id,
+                                                this_poll->second.admin_channel_msgid, "",
                                                 make_shared<GenericReply>());
             bot.getApi().sendMessage(admin_channel_id,
                                      "[" + query->from->firstName
-                                     + (query->from->lastName.length() > 0 ? " " + query->from->lastName : "")
+                                     + (query->from->lastName.length() > 0 ? " " +
+                                                                             query->from->lastName
+                                                                           : "")
                                      + "](tg://user?id=" + to_string(query->from->id) + ") 已将"
                                      + "此人"
                                      /*
@@ -528,7 +600,8 @@ int main(int argc, char *argv[]) {
     cout << "Bot: " + string(bot.getApi().getMe()->username.c_str()) << endl
          << "Build: " << __DATE__ << " " << __TIME__ << endl
          << "----------" << endl
-         << "\033[1m[" << put_time(localtime(&birthTime), "%h %d %H:%M:%S") << "]\033[0m\t" << "Birth." << endl;
+         << "\033[1m[" << put_time(localtime(&birthTime), "%h %d %H:%M:%S") << "]\033[0m\t"
+         << "Birth." << endl;
     TgLongPoll longPoll(bot);
     while(!sigintGot) {
         time_t tm = time(nullptr);
@@ -539,7 +612,8 @@ int main(int argc, char *argv[]) {
             cout << "\033[1;31mErr\033[0m " << e.what() << endl;
         }
         tm = time(nullptr);
-        cout << "\033[1m[" << put_time(localtime(&tm), "%h %d %H:%M:%S") << "]\033[0m\t" << "longPoll ended.\n";
+        cout << "\033[1m[" << put_time(localtime(&tm), "%h %d %H:%M:%S") << "]\033[0m\t"
+             << "longPoll ended.\n";
         cin.ignore(0);
 #ifdef NDEBUG
         write(watchdog_fd[1], &tm, sizeof(tm));

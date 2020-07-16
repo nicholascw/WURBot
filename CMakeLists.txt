@@ -3,7 +3,7 @@ project(WouldURatherCreator)
 
 set(CMAKE_CXX_STANDARD 11)
 
-add_executable(WouldURatherCreator main.cpp config.hpp)
+add_executable(WouldURatherCreator main.cpp)
 
 set(Boost_USE_MULTITHREADED ON)
 find_package(Threads REQUIRED)
