@@ -5,7 +5,9 @@
 #include "config_debug.h"
 
 #else
+
 #include "config_release.h"
+
 #endif
 
 using namespace std;
@@ -89,16 +91,18 @@ int32_t send_to_admin_channel(Bot &bot, pending_stage &new_post) {
     vector<std::string> opts;
     opts.push_back(json_escape(new_post.opt1));
     opts.push_back(json_escape(new_post.opt2));
-    int32_t msgId = bot.getApi().sendPoll(admin_channel_id,
-                                          json_escape((new_post.anon ? "匿名投稿" : "by " +
-                                                                                new_post.username) +
-                                                      (new_post.assumption.length() > 0 ?
-                                                       "\n假设/前提：" +
-                                                       new_post.assumption : "")),
-                                          opts,
-                                          false,
-                                          0,
-                                          decision_kbd)->messageId;
+    int32_t msgId =
+            bot.getApi().sendPoll(admin_channel_id,
+                                  json_escape(
+                                          "预印ID: " + to_string(new_post.hash) + "\n" +
+                                          (new_post.anon ? "匿名投稿" : "by " + new_post.username) +
+                                          (new_post.assumption.length() > 0 ? "\n假设/前提：" +
+                                                                              new_post.assumption
+                                                                            : "")),
+                                  opts,
+                                  false,
+                                  0,
+                                  decision_kbd)->messageId;
     bot.getApi().stopPoll(admin_channel_id, msgId, decision_kbd);
     return msgId;
 }
@@ -213,7 +217,8 @@ int main(int argc, char *argv[]) {
         fcntl(watchdog_fd[0], F_SETFL, fcntl(watchdog_fd[0], F_GETFL) | O_NONBLOCK);
         while(time(nullptr) - last_feed < 40) {
             if(read(watchdog_fd[0], &last_feed, sizeof(time_t)) == sizeof(time_t))
-                cout << "\033[1m[" << put_time(localtime(&last_feed), "%h %d %H:%M:%S") << "]\033[0m\t"
+                cout << "\033[1m[" << put_time(localtime(&last_feed), "%h %d %H:%M:%S")
+                     << "]\033[0m\t"
                      << "Yummy feed~\n";
             sleep(1);
         }
@@ -221,7 +226,8 @@ int main(int argc, char *argv[]) {
         kill(child_id, SIGHUP);
         waitpid(child_id, NULL, WIFSIGNALED(0) | WIFEXITED(0));
         last_feed = time(nullptr);
-        cout << "\033[1m[" << put_time(localtime(&last_feed), "%h %d %H:%M:%S") << "]\033[0m\t" << "Yummy bot~\n";
+        cout << "\033[1m[" << put_time(localtime(&last_feed), "%h %d %H:%M:%S") << "]\033[0m\t"
+             << "Yummy bot~\n";
         exit(0);
     }
     close(watchdog_fd[0]);
@@ -292,9 +298,16 @@ int main(int argc, char *argv[]) {
         if(message->text.length() > 5) {
             if((assumption_pos = message->text.find('\n')) != string::npos) {
                 if((opt1_pos = message->text.find('\n', assumption_pos + 1)) != string::npos) {
-                    new_poll.opt1 = message->text.substr(assumption_pos + 1,
-                                                         opt1_pos - assumption_pos);
-                    new_poll.opt2 = message->text.substr(opt1_pos + 1);
+                    if(assumption_pos > 5)
+                        new_poll.assumption = message->text.substr(5,
+                                                                   assumption_pos - 5);
+                    new_poll.opt1 =
+                            message->text.substr(assumption_pos + 1, opt1_pos - assumption_pos - 1);
+                    new_poll.opt2 =
+                            message->text.substr(opt1_pos + 1,
+                                                 message->text.find('\n', opt1_pos + 1) -
+                                                 opt1_pos - 1);
+                    new_poll.stage = OPT2;
                 }
                 do { new_poll.hash = get_hash(); }
                 while(unpublished_polls.find(new_poll.hash) != unpublished_polls.end());
@@ -337,9 +350,16 @@ int main(int argc, char *argv[]) {
         if(message->text.length() > 6) {
             if((assumption_pos = message->text.find('\n')) != string::npos) {
                 if((opt1_pos = message->text.find('\n', assumption_pos + 1)) != string::npos) {
-                    new_poll.opt1 = message->text.substr(assumption_pos + 1,
-                                                         opt1_pos - assumption_pos);
-                    new_poll.opt2 = message->text.substr(opt1_pos + 1);
+                    if(assumption_pos > 6)
+                        new_poll.assumption = message->text.substr(6,
+                                                                   assumption_pos - 6);
+                    new_poll.opt1 =
+                            message->text.substr(assumption_pos + 1, opt1_pos - assumption_pos - 1);
+                    new_poll.opt2 =
+                            message->text.substr(opt1_pos + 1,
+                                                 message->text.find('\n', opt1_pos + 1) -
+                                                 opt1_pos - 1);
+                    new_poll.stage = OPT2;
                 }
                 do { new_poll.hash = get_hash(); }
                 while(unpublished_polls.find(new_poll.hash) != unpublished_polls.end());
@@ -476,6 +496,57 @@ int main(int argc, char *argv[]) {
         else bot.getApi().sendMessage(message->chat->id, "你不是频道管理员或没有频道消息发布权限。");
     });
 
+    bot.getEvents().onCommand("r", [&bot, &unpublished_polls](const Message::Ptr &message) {
+        if(!is_admin(bot, message->from->id)) {
+            bot.getApi().sendMessage(message->chat->id, "演，接着演，真觉得自己是admin了还是咋die？");
+            return;
+        }
+        int hash_pos, reply_pos;
+        if(message->text.size() < 4
+           || (hash_pos = message->text.find(' ')) == string::npos
+           || (reply_pos = message->text.find(' ', hash_pos + 1)) == string::npos) {
+            bot.getApi().sendMessage(message->chat->id, "兄啊，咱这是不是...短了点？");
+            return;
+        }
+        auto this_poll = unpublished_polls.find(stoi(message->text.substr(3, hash_pos - 3)));
+        if(this_poll == unpublished_polls.end()) {
+            bot.getApi().sendMessage(message->chat->id,
+                                     "艹我怎么找不到这条投稿的！",
+                                     true,
+                                     message->messageId);
+
+            return;
+        }
+
+        bot.getApi().sendMessage(this_poll->second.user_chatid,
+                                 json_escape("你这条投稿不行啊，审核失败了。审核君说：" +
+                                             message->text.substr(reply_pos + 1)),
+                                 false,
+                                 bot.getApi().forwardMessage(this_poll->second.user_chatid,
+                                                             admin_channel_id,
+                                                             this_poll->second.admin_channel_msgid,
+                                                             true)->messageId,
+                                 make_shared<GenericReply>(), "", true);
+        bot.getApi().editMessageReplyMarkup(admin_channel_id,
+                                            this_poll->second.admin_channel_msgid, "",
+                                            make_shared<GenericReply>());
+        bot.getApi().sendMessage(admin_channel_id,
+                                 "由 [" + message->from->firstName +
+                                 (message->from->lastName.length() > 0 ?
+                                  " " + message->from->lastName : "") + "](tg://user?id=" +
+                                 to_string(message->from->id) + ") 拒绝，理由：" +
+                                 json_escape(message->text.substr(reply_pos + 1)),
+                                 false,
+                                 this_poll->second.admin_channel_msgid,
+                                 make_shared<GenericReply>(),
+                                 "markdown", true);
+        bot.getApi().sendMessage(message->chat->id,
+                                 "好，那我叫ta拿回去重写了！",
+                                 true,
+                                 message->messageId);
+        unpublished_polls.erase(this_poll);
+    });
+
     bot.getEvents().onNonCommandMessage(
             [&bot, &unfinished_polls, &unpublished_polls](const Message::Ptr &message) {
                 if(message->date < birthTime &&
@@ -509,14 +580,16 @@ int main(int argc, char *argv[]) {
             vector<std::string> opts;
             opts.push_back(json_escape(this_poll->second.opt1));
             opts.push_back(json_escape(this_poll->second.opt2));
-            bot.getApi().sendPoll(channel_id,
-                                  json_escape((this_poll->second.anon ? "匿名投稿" : ("by " +
-                                                                                  this_poll->second.username)) +
-                                              (this_poll->second.assumption.length() > 0 ?
-                                               "\n假设/前提：" +
-                                               this_poll->second.assumption
-                                                                                         : "")),
-                                  opts);
+            auto poll_msg = bot.getApi().sendPoll(channel_id,
+                                                  json_escape((this_poll->second.anon ? "匿名投稿" : (
+                                                          "by " +
+                                                          this_poll->second.username)) +
+                                                              (this_poll->second.assumption.length() >
+                                                               0 ?
+                                                               "\n假设/前提：" +
+                                                               this_poll->second.assumption
+                                                                 : "")),
+                                                  opts);
             //bot.getApi().sendMessage(this_poll->second.user_chatid,
             //"你的某条投稿已通过哦，快去 @WouldURather_CN 看看",
             //false,
@@ -550,8 +623,8 @@ int main(int argc, char *argv[]) {
                                      this_poll->second.admin_channel_msgid,
                                      make_shared<GenericReply>(),
                                      "markdown", true);
-            unpublished_polls.erase(this_poll);
             bot.getApi().answerCallbackQuery(query->id, "好，那我叫ta拿回去重写了！", false);
+            unpublished_polls.erase(this_poll);
         } else if(StringTools::startsWith(query->data, "forbid")) {
             if(jail_ptr->find(this_poll->second.user_id) != jail_ptr->end())
                 jail_ptr->erase(jail_ptr->find(this_poll->second.user_id));
@@ -597,7 +670,7 @@ int main(int argc, char *argv[]) {
     });
 
 
-    cout << "Bot: " + string(bot.getApi().getMe()->username.c_str()) << endl
+    cout << "Bot: " + string(bot.getApi().getMe()->username) << endl
          << "Build: " << __DATE__ << " " << __TIME__ << endl
          << "----------" << endl
          << "\033[1m[" << put_time(localtime(&birthTime), "%h %d %H:%M:%S") << "]\033[0m\t"
