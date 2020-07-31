@@ -56,7 +56,7 @@ bool is_in_jail(int32_t userid) {
 
 bool is_admin(Bot &bot, int32_t user_id) {
     for(const auto &i : bot.getApi().getChatAdministrators(channel_id))
-        if(i->user->id == user_id && (i->canPostMessages || i->status == "creator")) return true;
+        if(i->user->id == user_id && (i->canEditMessages || i->status == "creator")) return true;
     return false;
 }
 
